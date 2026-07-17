@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Ranchillo Ventas Sistema Apple - Control de Ventas de Alimento para Mascotas</title>
+    <title>Ranchillo - Control de Ventas Alimento de Mascotas</title>
     <meta name="description" content="Sistema de control y registro diario de ventas de alimento para mascotas en Ranchillo. Optimizado para PC y Celulares.">
     
     <!-- Mobile Web App Capable tags for iOS -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
-    <meta name="apple-mobile-web-app-title" content="Ranchillo Ventas Sistema Apple">
+    <meta name="apple-mobile-web-app-title" content="Ranchillo">
     <link rel="apple-touch-icon" href="./icon.png">
     
     <!-- Link to PWA Manifest -->
@@ -30,7 +30,7 @@
         <div class="install-content">
             <span class="install-icon">📲</span>
             <div>
-                <h4>Instalar Ranchillo Ventas Sistema Apple</h4>
+                <h4>Instalar Ranchillo - Control de Ventas Alimento de Mascotas</h4>
                 <p>Agrégala a tu pantalla de inicio para usarla offline</p>
             </div>
         </div>
@@ -57,6 +57,15 @@
                 </svg>
             </button>
             
+            <!-- Reportes Button (Visible on desktop/tablet header) -->
+            <button class="btn-catalog-header desktop-only" onclick="abrirReportesModal()" style="background-color: #2563eb; margin-right: 8px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" class="btn-svg" style="width: 16px; height: 16px; margin-right: 6px;">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                </svg>
+                <span>Reportes del Negocio</span>
+            </button>
+
             <!-- Inventario de Productos Button (Visible on desktop/tablet header) -->
             <button class="btn-catalog-header desktop-only" onclick="abrirCatalogModal()">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" class="btn-svg" style="width: 16px; height: 16px; margin-right: 6px;">
@@ -247,6 +256,17 @@
                         </button>
                     </div>
                 </div>
+
+                <!-- Stock Status Indicator Dog (Fiel a la foto 4) -->
+                <div id="stockStatusContainer" class="stock-status-container status-card-good">
+                    <div class="stock-status-img-wrapper">
+                        <img id="stockStatusImg" src="./dog-green.png" alt="Estado de inventario" class="stock-status-img">
+                    </div>
+                    <div class="stock-status-info">
+                        <h4>Estado del Stock: <span id="stockStatusLabel" class="status-good">Excelente</span></h4>
+                        <p id="stockStatusDesc">Todos los productos cuentan con suficiente inventario.</p>
+                    </div>
+                </div>
             </section>
             
         </div>
@@ -278,6 +298,10 @@
                                 <label for="nuevoProductoPrecio">Precio ($)</label>
                                 <input type="number" id="nuevoProductoPrecio" placeholder="Ej: 18500" min="0" required>
                             </div>
+                            <div class="form-group price-field" style="width: 90px;">
+                                <label for="nuevoProductoStock">Stock Inicial</label>
+                                <input type="number" id="nuevoProductoStock" placeholder="15" value="15" min="0" required>
+                            </div>
                         </div>
                         <button type="submit" class="btn-secondary btn-full">
                             <span>➕ Agregar al Catálogo</span>
@@ -305,13 +329,125 @@
                                 <tr>
                                     <th>Nombre del Producto</th>
                                     <th>Precio Unitario</th>
-                                    <th style="text-align: center;">Acción</th>
+                                    <th style="text-align: center;">Stock</th>
+                                    <th style="text-align: center;">Acciones</th>
                                 </tr>
                             </thead>
                             <tbody id="listaProductosModal">
                                 <!-- Productos cargados dinámicamente -->
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 4: REPORTS (REPORTES) -->
+        <section id="tab-reportes" class="tab-content">
+            <div class="catalog-modal-wrapper">
+                
+                <div class="catalog-modal-header">
+                    <h2>Reportes y Estadísticas</h2>
+                    <button type="button" class="close-modal-btn" onclick="cerrarReportesModal()">&times;</button>
+                </div>
+                
+                <div class="section-title mobile-only" style="margin-top: 10px;">
+                    <h2>Reportes del Negocio</h2>
+                    <p>Genera y comparte informes del negocio</p>
+                </div>
+
+                <!-- Card 1: Reporte de Inventario / Stock -->
+                <div class="card report-card">
+                    <div class="report-card-header" style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
+                        <span class="report-icon" style="font-size: 1.4rem;">📦</span>
+                        <h3 style="font-size: 1rem; color: var(--text-primary);">Informe de Inventario (Stock)</h3>
+                    </div>
+                    <p class="report-desc" style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 14px; line-height: 1.4;">
+                        Genera un listado del stock actual de todos los productos o filtra por los que tienen stock crítico/bajo.
+                    </p>
+                    
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label for="filtroReporteStock">Filtrar por Nivel de Stock</label>
+                        <select id="filtroReporteStock">
+                            <option value="todos">Todos los productos</option>
+                            <option value="bajo">Advertencia (7 o menos unids)</option>
+                            <option value="agotado">Agotados (0 unids)</option>
+                        </select>
+                    </div>
+
+                    <div class="report-actions-row">
+                        <button class="btn-whatsapp flex-center" onclick="enviarReporteStock('whatsapp')" style="width: 100%;">
+                            <span>💬 Compartir por WhatsApp</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Card 2: Reporte de Ventas por Mes / Año -->
+                <div class="card report-card" style="margin-bottom: 20px;">
+                    <div class="report-card-header" style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
+                        <span class="report-icon" style="font-size: 1.4rem;">📊</span>
+                        <h3 style="font-size: 1rem; color: var(--text-primary);">Informe de Ventas Mensual / Anual</h3>
+                    </div>
+                    <p class="report-desc" style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 14px; line-height: 1.4;">
+                        Genera el resumen de ingresos, métodos de pago y cantidad de productos vendidos en un periodo determinado.
+                    </p>
+                    
+                    <div class="form-row-mobile" style="display: flex; gap: 10px; margin-bottom: 16px;">
+                        <div class="form-group flex-grow">
+                            <label for="reporteMes">Mes</label>
+                            <select id="reporteMes">
+                                <option value="01">Enero</option>
+                                <option value="02">Febrero</option>
+                                <option value="03">Marzo</option>
+                                <option value="04">Abril</option>
+                                <option value="05">Mayo</option>
+                                <option value="06">Junio</option>
+                                <option value="07">Julio</option>
+                                <option value="08">Agosto</option>
+                                <option value="09">Septiembre</option>
+                                <option value="10">Octubre</option>
+                                <option value="11">Noviembre</option>
+                                <option value="12">Diciembre</option>
+                            </select>
+                        </div>
+                        <div class="form-group price-field" style="width: 110px;">
+                            <label for="reporteAnio">Año</label>
+                            <select id="reporteAnio">
+                                <option value="2026">2026</option>
+                                <option value="2027">2027</option>
+                                <option value="2028">2028</option>
+                                <option value="2029">2029</option>
+                                <option value="2030">2030</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="report-actions-row">
+                        <button class="btn-whatsapp flex-center" onclick="enviarReporteVentas('whatsapp')" style="width: 100%;">
+                            <span>💬 Compartir por WhatsApp</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Card 3: Reporte de Ventas Diario -->
+                <div class="card report-card">
+                    <div class="report-card-header" style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
+                        <span class="report-icon" style="font-size: 1.4rem;">📅</span>
+                        <h3 style="font-size: 1rem; color: var(--text-primary);">Informe de Ventas Diario</h3>
+                    </div>
+                    <p class="report-desc" style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 14px; line-height: 1.4;">
+                        Genera el resumen de ingresos y métodos de pago de un día específico desde el historial consolidado.
+                    </p>
+                    
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label for="reporteFechaDia">Seleccionar Fecha</label>
+                        <input type="date" id="reporteFechaDia" style="font-family: var(--font-main); padding: 10px; border: 1.5px solid var(--border-color); border-radius: var(--radius-sm); background-color: var(--bg-primary); color: var(--text-primary); outline: none; width: 100%;">
+                    </div>
+
+                    <div class="report-actions-row">
+                        <button class="btn-whatsapp flex-center" onclick="enviarReporteDiario('whatsapp')" style="width: 100%;">
+                            <span>💬 Compartir por WhatsApp</span>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -357,6 +493,17 @@
                 <line x1="7" y1="7" x2="7.01" y2="7"></line>
             </svg>
             <span>Catálogo</span>
+        </button>
+
+        <button class="nav-item" onclick="cambiarTab('tab-reportes', this)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="nav-icon">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+                <polyline points="10 9 9 9 8 9"></polyline>
+            </svg>
+            <span>Reportes</span>
         </button>
     </nav>
 

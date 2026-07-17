@@ -5,8 +5,47 @@ function registrarServiceWorker() {
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
             navigator.serviceWorker.register('./sw.js')
-                .then(reg => console.log('Service Worker registrado con éxito:', reg.scope))
+                .then(reg => {
+                    console.log('Service Worker registrado con éxito:', reg.scope);
+                    
+                    // Forzar verificación de actualización inmediatamente al abrir la app
+                    reg.update();
+
+                    // Verificar actualizaciones cuando la app vuelve a estar visible en primer plano
+                    document.addEventListener('visibilitychange', () => {
+                        if (document.visibilityState === 'visible') {
+                            reg.update();
+                        }
+                    });
+                    
+                    // Detectar actualizaciones automáticas cuando se suben cambios a GitHub
+                    reg.onupdatefound = () => {
+                        const installingWorker = reg.installing;
+                        if (installingWorker) {
+                            installingWorker.onstatechange = () => {
+                                if (installingWorker.state === 'installed') {
+                                    if (navigator.serviceWorker.controller) {
+                                        console.log('Nueva versión disponible. Aplicando actualización...');
+                                        showToast('🔄 Nueva actualización detectada. Aplicando mejoras...');
+                                        setTimeout(() => {
+                                            window.location.reload();
+                                        }, 1500);
+                                    }
+                                }
+                            };
+                        }
+                    };
+                })
                 .catch(err => console.error('Fallo al registrar Service Worker:', err));
+        });
+
+        // Forzar recarga inmediata de la página cuando el nuevo service worker toma el control
+        let refreshing = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (!refreshing) {
+                refreshing = true;
+                window.location.reload();
+            }
         });
     }
 }
@@ -71,10 +110,26 @@ let productos = JSON.parse(localStorage.getItem('ranchillo_pc_productos')) || [
 ];
 
 let ventas = JSON.parse(localStorage.getItem('ranchillo_pc_ventas')) || [];
+let ventasConsolidado = JSON.parse(localStorage.getItem('ranchillo_pc_ventas_consolidado'));
+
+// Migrar ventas preexistentes al consolidado si nunca se ha creado
+if (ventasConsolidado === null) {
+    ventasConsolidado = [...ventas];
+    localStorage.setItem('ranchillo_pc_ventas_consolidado', JSON.stringify(ventasConsolidado));
+}
+
+// Asegurar que todos los productos tengan la propiedad stock
+productos = productos.map(prod => {
+    if (prod.stock === undefined) {
+        prod.stock = 15; // Stock inicial por defecto
+    }
+    return prod;
+});
 
 function guardarDatos() {
     localStorage.setItem('ranchillo_pc_productos', JSON.stringify(productos));
     localStorage.setItem('ranchillo_pc_ventas', JSON.stringify(ventas));
+    localStorage.setItem('ranchillo_pc_ventas_consolidado', JSON.stringify(ventasConsolidado));
 }
 
 // --- NAVEGACIÓN POR PESTAÑAS (TAB NAVIGATION - MOBILE ONLY) ---
@@ -155,6 +210,24 @@ function cerrarCatalogModal() {
     }
 }
 
+function abrirReportesModal() {
+    vibrar(25);
+    const modal = document.getElementById('tab-reportes');
+    if (modal) {
+        modal.classList.add('desktop-modal-active');
+        document.body.style.overflow = 'hidden';
+    }
+}
+
+function cerrarReportesModal() {
+    vibrar(15);
+    const modal = document.getElementById('tab-reportes');
+    if (modal) {
+        modal.classList.remove('desktop-modal-active');
+        document.body.style.overflow = '';
+    }
+}
+
 // --- INICIALIZACIÓN DE LA APP ---
 function inicializar() {
     registrarServiceWorker();
@@ -163,6 +236,28 @@ function inicializar() {
     actualizarTablaVentas();
     actualizarTablaModalProductos();
     inicializarTema();
+    actualizarEstadoStockPerro(); // Cargar estado inicial del stock
+
+    // Inicializar periodos de reporte
+    const selectMes = document.getElementById('reporteMes');
+    const selectAnio = document.getElementById('reporteAnio');
+    if (selectMes && selectAnio) {
+        const ahora = new Date();
+        const mesActual = String(ahora.getMonth() + 1).padStart(2, '0');
+        const anioActual = String(ahora.getFullYear());
+        selectMes.value = mesActual;
+        selectAnio.value = anioActual;
+    }
+
+    const inputFecha = document.getElementById('reporteFechaDia');
+    if (inputFecha) {
+        // Set local date to YYYY-MM-DD format
+        const hoy = new Date();
+        const offset = hoy.getTimezoneOffset();
+        const localHoy = new Date(hoy.getTime() - (offset * 60 * 1000));
+        inputFecha.value = localHoy.toISOString().split('T')[0];
+    }
+
     configurarEventos();
 }
 
@@ -181,6 +276,16 @@ function configurarEventos() {
         catalogOverlay.addEventListener('click', (e) => {
             if (e.target === catalogOverlay && window.innerWidth >= 768) {
                 cerrarCatalogModal();
+            }
+        });
+    }
+
+    // Cerrar reportes desktop al pulsar fuera (en el overlay)
+    const reportOverlay = document.getElementById('tab-reportes');
+    if (reportOverlay) {
+        reportOverlay.addEventListener('click', (e) => {
+            if (e.target === reportOverlay && window.innerWidth >= 768) {
+                cerrarReportesModal();
             }
         });
     }
@@ -238,11 +343,20 @@ function registrarVenta() {
     const producto = productos.find(p => p.id === productoId);
     if (!producto) return;
 
+    // Verificar si hay stock suficiente
+    if (producto.stock < cantidad) {
+        vibrar(40);
+        return showToast(`❌ Stock insuficiente. Solo quedan ${producto.stock} unidades.`);
+    }
+
+    // Restar del stock
+    producto.stock -= cantidad;
+
     // Recargo por débito de $500 pesos por transacción (no por producto)
     const totalVenta = (producto.precio * cantidad) + (metodoPago === 'Débito' ? 500 : 0);
 
     // Agregar al inicio del listado de ventas
-    ventas.unshift({
+    const nuevaVenta = {
         id: Date.now(),
         fecha: new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
         producto: producto.nombre,
@@ -250,10 +364,15 @@ function registrarVenta() {
         precioUnitario: producto.precio,
         total: totalVenta,
         pago: metodoPago
-    });
+    };
+    
+    ventas.unshift(nuevaVenta);
+    ventasConsolidado.unshift(nuevaVenta);
 
     guardarDatos();
     actualizarTablaVentas();
+    actualizarTablaModalProductos(); // Actualizar tabla del catálogo para ver el stock
+    actualizarEstadoStockPerro(); // Actualizar la imagen del perro de stock
     cantidadInput.value = 1; // reset
     
     // Si estamos en móvil, cerramos el bottom sheet
@@ -391,6 +510,7 @@ function eliminarVenta(id) {
     vibrar(20);
     if (confirm('¿Eliminar este registro de venta?')) {
         ventas = ventas.filter(v => v.id !== id);
+        ventasConsolidado = ventasConsolidado.filter(v => v.id !== id);
         guardarDatos();
         actualizarTablaVentas();
         showToast('🗑️ Registro eliminado');
@@ -401,11 +521,11 @@ function eliminarVenta(id) {
 // --- RESET DE LA CAJA ---
 function eliminarVentas() {
     vibrar(40);
-    if (confirm('⚠️ ¿Estás seguro que deseas reiniciar la caja diaria? Esto borrará todas las ventas registradas hoy.')) {
+    if (confirm('🧹 ¿Deseas reiniciar el historial diario de ventas?\nLas ventas de hoy quedarán guardadas para tus reportes mensuales.')) {
         ventas = [];
         guardarDatos();
         actualizarTablaVentas();
-        showToast('🔄 Caja diaria reiniciada');
+        showToast('🔄 Historial diario reiniciado');
         vibrar(60);
     }
 }
@@ -486,25 +606,29 @@ function guardarProducto() {
     vibrar(20);
     const nombreInput = document.getElementById('nuevoProductoNombre');
     const precioInput = document.getElementById('nuevoProductoPrecio');
+    const stockInput = document.getElementById('nuevoProductoStock');
     
     const nombre = nombreInput.value.trim();
     const precio = parseInt(precioInput.value);
+    const stock = parseInt(stockInput.value);
     
-    if (!nombre || isNaN(precio) || precio < 0) {
+    if (!nombre || isNaN(precio) || precio < 0 || isNaN(stock) || stock < 0) {
         vibrar(40);
-        return showToast('❌ Completa el nombre y un precio válido.');
+        return showToast('❌ Completa todos los campos con valores válidos.');
     }
 
     const id = productos.length > 0 ? Math.max(...productos.map(p => p.id)) + 1 : 1;
     
-    productos.push({ id, nombre, precio });
+    productos.push({ id, nombre, precio, stock });
     
     nombreInput.value = '';
     precioInput.value = '';
+    stockInput.value = '15';
     
     guardarDatos();
     actualizarTablaModalProductos();
     actualizarSelectProductos();
+    actualizarEstadoStockPerro(); // Refrescar el estado de stock
     showToast('📦 Producto agregado al catálogo');
     vibrar(30);
 }
@@ -530,7 +654,7 @@ function actualizarTablaModalProductos() {
     tbody.innerHTML = '';
     
     if (productos.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color: var(--text-secondary); padding: 20px;">El catálogo está vacío.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color: var(--text-secondary); padding: 20px;">El catálogo está vacío.</td></tr>`;
         return;
     }
 
@@ -540,7 +664,11 @@ function actualizarTablaModalProductos() {
             <td style="font-weight: 500;">${prod.nombre}</td>
             <td style="font-weight: 700; color: #f97316;">
                 <div>${formatoMoneda(prod.precio)}</div>
-                <button class="btn-price-adjust" onclick="ajustarPrecio(${prod.id})">✏️ Editar</button>
+                <button class="btn-price-adjust" onclick="ajustarPrecio(${prod.id})">✏️ Precio</button>
+            </td>
+            <td style="text-align: center; font-weight: 700;">
+                <div style="font-size: 1.05rem; color: var(--text-primary);">${prod.stock}</div>
+                <button class="btn-price-adjust" onclick="ajustarStock(${prod.id})">✏️ Stock</button>
             </td>
             <td style="text-align: center;">
                 <button class="btn-delete-row" onclick="eliminarProducto(${prod.id})" title="Eliminar del catálogo">
@@ -965,10 +1093,18 @@ const DB_PREDETERMINADA = [
 function cargarBaseDatosPredeterminada() {
     vibrar(30);
     if (confirm('⚠️ Esta acción reemplazará tu catálogo actual por la base de datos predeterminada de 122 productos. ¿Deseas continuar?')) {
-        productos = [...DB_PREDETERMINADA];
+        productos = DB_PREDETERMINADA.map(p => {
+            return {
+                id: p.id,
+                nombre: p.nombre,
+                precio: p.precio,
+                stock: 15 // Stock predeterminado de inicio
+            };
+        });
         guardarDatos();
         actualizarTablaModalProductos();
         actualizarSelectProductos();
+        actualizarEstadoStockPerro(); // Refrescar estado de stock
         showToast('📥 Base de datos cargada');
         vibrar(50);
     }
@@ -982,12 +1118,276 @@ function cerrarBannerInstalacion() {
     }
 }
 
+function ajustarStock(id) {
+    vibrar(15);
+    const prod = productos.find(p => p.id === id);
+    if (!prod) return;
+    
+    const nuevoStockStr = prompt(`Cambiar stock de:\n"${prod.nombre}"\n\nIngresa la cantidad actual en inventario:`, prod.stock);
+    if (nuevoStockStr === null) return;
+    
+    const nuevoStock = parseInt(nuevoStockStr);
+    if (isNaN(nuevoStock) || nuevoStock < 0) {
+        vibrar(40);
+        return showToast('❌ Stock no válido.');
+    }
+    
+    prod.stock = nuevoStock;
+    guardarDatos();
+    actualizarTablaModalProductos();
+    actualizarEstadoStockPerro();
+    showToast('✅ Inventario actualizado');
+    vibrar(30);
+}
+
+function actualizarEstadoStockPerro() {
+    const img = document.getElementById('stockStatusImg');
+    const label = document.getElementById('stockStatusLabel');
+    const desc = document.getElementById('stockStatusDesc');
+    const container = document.getElementById('stockStatusContainer');
+    if (!img || !label || !desc || !container) return;
+
+    if (productos.length === 0) {
+        img.src = './dog-green.png';
+        label.className = 'status-good';
+        label.innerText = 'Sin Productos';
+        desc.innerText = 'Agrega productos al catálogo para iniciar.';
+        container.className = 'stock-status-container status-card-good';
+        return;
+    }
+
+    let countZero = 0;
+    let countLow = 0;
+    let productsZero = [];
+    let productsLow = [];
+
+    productos.forEach(p => {
+        if (p.stock === 0) {
+            countZero++;
+            productsZero.push(p.nombre);
+        } else if (p.stock <= 7) {
+            countLow++;
+            productsLow.push(`${p.nombre} (${p.stock} unids)`);
+        }
+    });
+
+    if (countZero > 0) {
+        img.src = './dog-red.png';
+        label.className = 'status-bad';
+        label.innerText = 'Crítico / Deficiente';
+        desc.innerText = `¡Alerta! Sin stock: ${productsZero.join(', ')}.`;
+        container.className = 'stock-status-container status-card-bad';
+    } else if (countLow > 0) {
+        img.src = './dog-yellow.png';
+        label.className = 'status-warning';
+        label.innerText = 'Medio / Advertencia';
+        desc.innerText = `Atención, stock bajo en: ${productsLow.join(', ')}.`;
+        container.className = 'stock-status-container status-card-warning';
+    } else {
+        img.src = './dog-green.png';
+        label.className = 'status-good';
+        label.innerText = 'Excelente / Óptimo';
+        desc.innerText = 'Todos los productos cuentan con suficiente inventario.';
+        container.className = 'stock-status-container status-card-good';
+    }
+}
+
+function esVentaEnMesAnio(venta, mes, anio) {
+    const fechaVenta = new Date(venta.id);
+    if (isNaN(fechaVenta.getTime())) return false;
+    const m = String(fechaVenta.getMonth() + 1).padStart(2, '0');
+    const y = String(fechaVenta.getFullYear());
+    return m === mes && y === anio;
+}
+
+function generarReporteStockTexto(filtro) {
+    let texto = `*🐾 RANCHILLO PC - REPORTE DE STOCK 🐾*\n`;
+    texto += `_Generado: ${new Date().toLocaleDateString('es-CL')} ${new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })}_\n\n`;
+
+    let productosFiltrados = [...productos];
+    if (filtro === 'bajo') {
+        productosFiltrados = productosFiltrados.filter(p => p.stock > 0 && p.stock <= 7);
+        texto += `*Filtro: Stock Bajo (7 o menos unids)*\n\n`;
+    } else if (filtro === 'agotado') {
+        productosFiltrados = productosFiltrados.filter(p => p.stock === 0);
+        texto += `*Filtro: Agotados (0 unids)*\n\n`;
+    } else {
+        texto += `*Filtro: Todos los productos*\n\n`;
+    }
+
+    if (productosFiltrados.length === 0) {
+        texto += `No hay productos que coincidan con este filtro.`;
+    } else {
+        productosFiltrados.forEach((p, idx) => {
+            let statusEmoji = '🟢';
+            if (p.stock === 0) statusEmoji = '🔴';
+            else if (p.stock <= 7) statusEmoji = '🟡';
+            texto += `*${idx + 1}.* ${p.nombre}\n   • Stock: *${p.stock} unids* ${statusEmoji}\n   • Precio: *${formatoMoneda(p.precio)}*\n`;
+        });
+    }
+    return texto;
+}
+
+function generarReporteVentasTexto(mes, anio) {
+    const nombresMeses = {
+        '01': 'Enero', '02': 'Febrero', '03': 'Marzo', '04': 'Abril',
+        '05': 'Mayo', '06': 'Junio', '07': 'Julio', '08': 'Agosto',
+        '09': 'Septiembre', '10': 'Octubre', '11': 'Noviembre', '12': 'Diciembre'
+    };
+    
+    let texto = `*🐾 RANCHILLO PC - REPORTE MENSUAL DE VENTAS 🐾*\n`;
+    texto += `_Periodo: ${nombresMeses[mes]} de ${anio}_\n`;
+    texto += `_Generado: ${new Date().toLocaleDateString('es-CL')}_\n\n`;
+
+    const ventasFiltradas = ventas.filter(v => esVentaEnMesAnio(v, mes, anio));
+
+    if (ventasFiltradas.length === 0) {
+        texto += `No se registraron ventas en este periodo.`;
+        return texto;
+    }
+
+    let totalG = 0;
+    let efectivo = 0;
+    let transferencia = 0;
+    let debito = 0;
+
+    ventasFiltradas.forEach(v => {
+        totalG += v.total;
+        if (v.pago === 'Efectivo') {
+            efectivo += v.total;
+        } else if (v.pago === 'Débito') {
+            debito += v.total;
+        } else {
+            transferencia += v.total;
+        }
+    });
+
+    texto += `*Resumen de Ventas:*\n`;
+    texto += `💵 Total Efectivo: *${formatoMoneda(efectivo)}*\n`;
+    texto += `🏦 Total Transferencia: *${formatoMoneda(transferencia)}*\n`;
+    texto += `💳 Total Débito: *${formatoMoneda(debito)}*\n`;
+    texto += `💰 *TOTAL GENERAL: ${formatoMoneda(totalG)}*\n`;
+
+    return texto;
+}
+
+function enviarReporteStock(via) {
+    vibrar(25);
+    const filtro = document.getElementById('filtroReporteStock').value;
+    const texto = generarReporteStockTexto(filtro);
+    
+    if (via === 'whatsapp') {
+        const url = `https://wa.me/?text=${encodeURIComponent(texto)}`;
+        window.open(url, '_blank');
+    } else {
+        const subject = `Ranchillo - Reporte de Inventario (${new Date().toLocaleDateString('es-CL')})`;
+        const plainText = texto.replace(/\*/g, ''); // strip asterisks for cleaner text email
+        const mailtoUrl = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(plainText)}`;
+        window.open(mailtoUrl, '_self');
+    }
+}
+
+function enviarReporteVentas(via) {
+    vibrar(25);
+    const mes = document.getElementById('reporteMes').value;
+    const anio = document.getElementById('reporteAnio').value;
+    const texto = generarReporteVentasTexto(mes, anio);
+    
+    if (via === 'whatsapp') {
+        const url = `https://wa.me/?text=${encodeURIComponent(texto)}`;
+        window.open(url, '_blank');
+    } else {
+        const nombresMeses = {
+            '01': 'Enero', '02': 'Febrero', '03': 'Marzo', '04': 'Abril',
+            '05': 'Mayo', '06': 'Junio', '07': 'Julio', '08': 'Agosto',
+            '09': 'Septiembre', '10': 'Octubre', '11': 'Noviembre', '12': 'Diciembre'
+        };
+        const subject = `Ranchillo - Reporte de Ventas ${nombresMeses[mes]} ${anio}`;
+        const plainText = texto.replace(/\*/g, ''); // strip asterisks for cleaner text email
+        const mailtoUrl = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(plainText)}`;
+        window.open(mailtoUrl, '_self');
+    }
+}
+
+function esVentaEnFecha(venta, fechaString) {
+    const fechaVenta = new Date(venta.id);
+    if (isNaN(fechaVenta.getTime())) return false;
+    const y = fechaVenta.getFullYear();
+    const m = String(fechaVenta.getMonth() + 1).padStart(2, '0');
+    const d = String(fechaVenta.getDate()).padStart(2, '0');
+    const fechaFormateada = `${y}-${m}-${d}`;
+    return fechaFormateada === fechaString;
+}
+
+function generarReporteDiarioTexto(fechaString) {
+    const partes = fechaString.split('-');
+    const fechaFormateada = partes.length === 3 ? `${partes[2]}/${partes[1]}/${partes[0]}` : fechaString;
+
+    let texto = `*🐾 RANCHILLO PC - REPORTE DIARIO DE VENTAS 🐾*\n`;
+    texto += `_Fecha: ${fechaFormateada}_\n`;
+    texto += `_Generado: ${new Date().toLocaleDateString('es-CL')}_\n\n`;
+
+    const ventasFiltradas = ventasConsolidado.filter(v => esVentaEnFecha(v, fechaString));
+
+    if (ventasFiltradas.length === 0) {
+        texto += `No se registraron ventas en esta fecha.`;
+        return texto;
+    }
+
+    let totalG = 0;
+    let efectivo = 0;
+    let transferencia = 0;
+    let debito = 0;
+
+    ventasFiltradas.forEach(v => {
+        totalG += v.total;
+        if (v.pago === 'Efectivo') {
+            efectivo += v.total;
+        } else if (v.pago === 'Débito') {
+            debito += v.total;
+        } else {
+            transferencia += v.total;
+        }
+    });
+
+    texto += `*Resumen de Ventas:*\n`;
+    texto += `💵 Total Efectivo: *${formatoMoneda(efectivo)}*\n`;
+    texto += `🏦 Total Transferencia: *${formatoMoneda(transferencia)}*\n`;
+    texto += `💳 Total Débito: *${formatoMoneda(debito)}*\n`;
+    texto += `💰 *TOTAL GENERAL: ${formatoMoneda(totalG)}*\n`;
+
+    return texto;
+}
+
+function enviarReporteDiario(via) {
+    vibrar(25);
+    const fechaString = document.getElementById('reporteFechaDia').value;
+    if (!fechaString) {
+        return showToast('❌ Selecciona una fecha válida.');
+    }
+    const texto = generarReporteDiarioTexto(fechaString);
+    
+    if (via === 'whatsapp') {
+        const url = `https://wa.me/?text=${encodeURIComponent(texto)}`;
+        window.open(url, '_blank');
+    } else {
+        const partes = fechaString.split('-');
+        const fechaFormateada = partes.length === 3 ? `${partes[2]}/${partes[1]}/${partes[0]}` : fechaString;
+        const subject = `Ranchillo - Reporte Diario ${fechaFormateada}`;
+        const plainText = texto.replace(/\*/g, ''); // strip asterisks for cleaner text email
+        const mailtoUrl = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(plainText)}`;
+        window.open(mailtoUrl, '_self');
+    }
+}
+
 // --- ASIGNACIONES DE CONTEXTO GLOBAL PARA ELEMENTOS HTML ---
 window.cambiarTab = cambiarTab;
 window.abrirModalRegistro = abrirModalRegistro;
 window.cerrarModalRegistro = cerrarModalRegistro;
 window.abrirCatalogModal = abrirCatalogModal;
 window.cerrarCatalogModal = cerrarCatalogModal;
+window.abrirReportesModal = abrirReportesModal;
+window.cerrarReportesModal = cerrarReportesModal;
 window.registrarVenta = registrarVenta;
 window.eliminarVentas = eliminarVentas;
 window.eliminarVenta = eliminarVenta;
@@ -999,6 +1399,11 @@ window.filtrarVentas = filtrarVentas;
 window.cerrarBannerInstalacion = cerrarBannerInstalacion;
 window.cargarBaseDatosPredeterminada = cargarBaseDatosPredeterminada;
 window.ajustarPrecio = ajustarPrecio;
+window.ajustarStock = ajustarStock;
+window.actualizarEstadoStockPerro = actualizarEstadoStockPerro;
+window.enviarReporteStock = enviarReporteStock;
+window.enviarReporteVentas = enviarReporteVentas;
+window.enviarReporteDiario = enviarReporteDiario;
 window.cambiarPaleta = cambiarPaleta;
 window.setTemaManual = setTemaManual;
 window.toggleFondoPerrito = toggleFondoPerrito;

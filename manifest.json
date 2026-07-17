@@ -1,6 +1,6 @@
 {
-  "name": "Ranchillo Ventas Sistema Apple",
-  "short_name": "Ranchillo Ventas Sistema Apple",
+  "name": "Ranchillo - Control de Ventas Alimento de Mascotas",
+  "short_name": "Ranchillo Ventas",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#f8fafc",
